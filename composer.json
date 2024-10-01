@@ -1,0 +1,21 @@
+{
+    "name": "reactphp-x/bandwidth",
+    "license": "MIT",
+    "autoload": {
+        "psr-4": {
+            "ReactphpX\\Bandwidth\\": "src/"
+        }
+    },
+    "authors": [
+        {
+            "name": "wpjscc",
+            "email": "wpjscc@gmail.com"
+        }
+    ],
+    "require": {
+        "reactphp-x/concurrent": "^1.0",
+        "reactphp-x/limiter": "^1.0",
+        "react/stream": "^1.4",
+        "wpjscc/filesystem": "^0.2.0"
+    }
+}
