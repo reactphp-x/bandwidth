@@ -29,7 +29,7 @@ final class Bandwidth
         }
     }
 
-    public function file(string $path)
+    public function file(string $path, $p = 0, $length = -1)
     {
         $stream = new \React\Stream\ThroughStream();
 
@@ -39,15 +39,23 @@ final class Bandwidth
             } else {
                 throw new \RuntimeException($path. ' is not a file');
             }
-        })->then(function ($stat) use ($stream) {
+        })->then(function ($stat) use ($stream, $p, $length) {
             if ($this->queue) {
-                return $this->concurrent->concurrent(function () use ($stream, $stat) {
+                return $this->concurrent->concurrent(function () use ($stream, $stat, $p, $length) {
                     $file = $this->filesystem->file($stat->path());
-                    return $this->fileStream($file, $stream, 0, $stat->size());
+                    $size = $stat->size();
+                    if ($length > 0) {
+                        $size = min($size, $p + $length);
+                    }
+                    return $this->fileStream($file, $stream, $p, $size);
                 });
             } else {
                 $file = $this->filesystem->file($stat->path());
-                return $this->fileStream($file, $stream, 0, $stat->size());
+                $size = $stat->size();
+                if ($length > 0) {
+                    $size = min($size, $p + $length);
+                }
+                return $this->fileStream($file, $stream, $p, $size);
             }
         }, function ($e) use ($stream) {
             $stream->emit('error', [$e]);
