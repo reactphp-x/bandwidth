@@ -63,6 +63,19 @@ final class Bandwidth
         return $stream;
     }
 
+    public function stream($stream)
+    {
+        $stream = new \React\Stream\ThroughStream();
+        $stream->on('data', function ($data) use ($stream) {
+            $this->concurrent->concurrent(function() use ($stream, $data){
+                return $this->bucket->removeTokens(1024 * strlen($data))->then(function () use ($stream, $data) {
+                    $stream->write($data);
+                });
+            });
+        });
+        return $stream;
+    }
+
     protected function fileStream($file, $stream, $p, $size)
     {
 
