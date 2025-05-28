@@ -29,9 +29,11 @@ final class Bandwidth
         }
     }
 
-    public function file(string $path, $p = 0, $length = -1)
+    public function file(string $path, $p = 0, $length = -1, $readKB = 0)
     {
         $stream = new \React\Stream\ThroughStream();
+
+        $readKB = $readKB > 0 ? min($readKB, $this->KB) : $this->KB;
 
         $this->filesystem->detect($path)->then(function ($node) use ($path) {
             if ($node instanceof \React\Filesystem\Node\FileInterface) {
@@ -39,15 +41,15 @@ final class Bandwidth
             } else {
                 throw new \RuntimeException($path. ' is not a file');
             }
-        })->then(function ($stat) use ($stream, $p, $length) {
+        })->then(function ($stat) use ($stream, $p, $length, $readKB) {
             if ($this->queue) {
-                return $this->concurrent->concurrent(function () use ($stream, $stat, $p, $length) {
+                return $this->concurrent->concurrent(function () use ($stream, $stat, $p, $length, $readKB) {
                     $file = $this->filesystem->file($stat->path());
                     $size = $stat->size();
                     if ($length > 0) {
                         $size = min($size, $p + $length);
                     }
-                    return $this->fileStream($file, $stream, $p, $size);
+                    return $this->fileStream($file, $stream, $p, $size, $readKB);
                 });
             } else {
                 $file = $this->filesystem->file($stat->path());
@@ -55,7 +57,7 @@ final class Bandwidth
                 if ($length > 0) {
                     $size = min($size, $p + $length);
                 }
-                return $this->fileStream($file, $stream, $p, $size);
+                return $this->fileStream($file, $stream, $p, $size, $readKB);
             }
         }, function ($e) use ($stream) {
             $stream->emit('error', [$e]);
@@ -80,7 +82,7 @@ final class Bandwidth
         return $_stream;
     }
 
-    protected function fileStream($file, $stream, $p, $size)
+    protected function fileStream($file, $stream, $p, $size, $readKB)
     {
 
         if (!$stream->isWritable()) {
@@ -89,7 +91,7 @@ final class Bandwidth
 
         $currentSize = $size - $p;
 
-        if ($currentSize/1024 < $this->KB) {
+        if ($currentSize/1024 < $readKB) {
             return $this->bucket->removeTokens(1024 * 1024 * ceil($currentSize/1024))->then(function () use ($file, $stream, $p, $currentSize) {
                 return $file->getContents($p, $currentSize)->then(function ($contents) use ($stream) {
                     $stream->end($contents);
@@ -97,15 +99,15 @@ final class Bandwidth
                 });
             });
         } else {
-            return $this->bucket->removeTokens(1024 * 1024 * $this->KB)->then(function () use ($file, $stream, $p, $size) {
-                return $file->getContents($p, 1024 * 1024 * $this->KB)->then(function ($contents) use ($stream, $file, $p, $size) {
+            return $this->bucket->removeTokens(1024 * 1024 * $readKB)->then(function () use ($file, $stream, $p, $size, $readKB) {
+                return $file->getContents($p, 1024 * 1024 * $readKB)->then(function ($contents) use ($stream, $file, $p, $size, $readKB) {
                     $p += strlen($contents);
                     if ($p >= $size) {
                         $stream->end($contents);
                         return null;
                     } else {
                         $stream->write($contents);
-                        return $this->fileStream($file, $stream, $p, $size);
+                        return $this->fileStream($file, $stream, $p, $size, $readKB);
                     }
                 });
             });
