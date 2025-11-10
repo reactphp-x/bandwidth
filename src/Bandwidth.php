@@ -5,6 +5,8 @@ namespace ReactphpX\Bandwidth;
 use ReactphpX\Concurrent\Concurrent;
 use ReactphpX\Limiter\TokenBucket;
 use React\Filesystem\Factory;
+use function React\Async\async;
+use function React\Async\await;
 
 final class Bandwidth
 {
@@ -35,33 +37,37 @@ final class Bandwidth
 
         $readKB = $readKB > 0 ? min($readKB, $this->KB) : $this->KB;
 
-        $this->filesystem->detect($path)->then(function ($node) use ($path) {
-            if ($node instanceof \React\Filesystem\Node\FileInterface) {
-                return $node->stat();
-            } else {
-                throw new \RuntimeException($path. ' is not a file');
-            }
-        })->then(function ($stat) use ($stream, $p, $length, $readKB) {
-            if ($this->queue) {
-                return $this->concurrent->concurrent(function () use ($stream, $stat, $p, $length, $readKB) {
+        async(function ($path, $stream, $p, $length, $readKB) {
+            try {
+                $node = await($this->filesystem->detect($path));
+                if (!($node instanceof \React\Filesystem\Node\FileInterface)) {
+                    throw new \RuntimeException($path . ' is not a file');
+                }
+                $stat = await($node->stat());
+
+                if ($this->queue) {
+                    await($this->concurrent->concurrent(
+                        async(function () use ($stream, $stat, $p, $length, $readKB) {
+                            $file = $this->filesystem->file($stat->path());
+                            $size = $stat->size();
+                            if ($length > 0) {
+                                $size = min($size, $p + $length);
+                            }
+                            return await($this->fileStream($file, $stream, $p, $size, $readKB));
+                        })
+                    ));
+                } else {
                     $file = $this->filesystem->file($stat->path());
                     $size = $stat->size();
                     if ($length > 0) {
                         $size = min($size, $p + $length);
                     }
-                    return $this->fileStream($file, $stream, $p, $size, $readKB);
-                });
-            } else {
-                $file = $this->filesystem->file($stat->path());
-                $size = $stat->size();
-                if ($length > 0) {
-                    $size = min($size, $p + $length);
+                    await($this->fileStream($file, $stream, $p, $size, $readKB));
                 }
-                return $this->fileStream($file, $stream, $p, $size, $readKB);
+            } catch (\Throwable $e) {
+                $stream->emit('error', [$e]);
             }
-        }, function ($e) use ($stream) {
-            $stream->emit('error', [$e]);
-        });
+        })($path, $stream, $p, $length, $readKB);
         return $stream;
     }
 
@@ -72,11 +78,12 @@ final class Bandwidth
         $concurrent = $this->queue ? $this->concurrent : new Concurrent(1);
         
         $stream->on('data', function ($data) use ($_stream, $concurrent) {
-            $concurrent->concurrent(function() use ($_stream, $data){
-                return $this->bucket->removeTokens(1024 * strlen($data))->then(function () use ($_stream, $data) {
+            $concurrent->concurrent(
+                async(function () use ($_stream, $data) {
+                    await($this->bucket->removeTokens(1024 * strlen($data)));
                     $_stream->write($data);
-                });
-            });
+                })
+            );
         });
        
         return $_stream;
@@ -85,32 +92,31 @@ final class Bandwidth
     protected function fileStream($file, $stream, $p, $size, $readKB)
     {
 
-        if (!$stream->isWritable()) {
-            return \React\Promise\resolve(null);
-        }
-
-        $currentSize = $size - $p;
-
-        if ($currentSize/1024 < $readKB) {
-            return $this->bucket->removeTokens(1024 * 1024 * ceil($currentSize/1024))->then(function () use ($file, $stream, $p, $currentSize) {
-                return $file->getContents($p, $currentSize)->then(function ($contents) use ($stream) {
-                    $stream->end($contents);
-                    return null;
-                });
-            });
-        } else {
-            return $this->bucket->removeTokens(1024 * 1024 * $readKB)->then(function () use ($file, $stream, $p, $size, $readKB) {
-                return $file->getContents($p, 1024 * 1024 * $readKB)->then(function ($contents) use ($stream, $file, $p, $size, $readKB) {
-                    $p += strlen($contents);
-                    if ($p >= $size) {
-                        $stream->end($contents);
-                        return null;
-                    } else {
-                        $stream->write($contents);
-                        return $this->fileStream($file, $stream, $p, $size, $readKB);
-                    }
-                });
-            });
-        }
+		return async(function () use ($file, $stream, $p, $size, $readKB) {
+			while (true) {
+				if (!$stream->isWritable()) {
+					return true;
+				}
+				$remaining = $size - $p;
+				if ($remaining <= 0) {
+					return true;
+				}
+				if ($remaining/1024 < $readKB) {
+					await($this->bucket->removeTokens(1024 * 1024 * ceil($remaining/1024)));
+					$contents = await($file->getContents($p, $remaining));
+					$stream->end($contents);
+					return true;
+				} else {
+					await($this->bucket->removeTokens(1024 * 1024 * $readKB));
+					$contents = await($file->getContents($p, 1024 * 1024 * $readKB));
+					$p += strlen($contents);
+					if ($p >= $size) {
+						$stream->end($contents);
+						return true;
+					}
+					$stream->write($contents);
+				}
+			}
+		})();
     }
 }

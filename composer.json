@@ -16,6 +16,7 @@
         "reactphp-x/concurrent": "^1.0",
         "reactphp-x/limiter": "^1.0",
         "react/stream": "^1.4",
-        "wpjscc/filesystem": "^0.2.0"
+        "wpjscc/filesystem": "^0.2.0",
+        "react/async": "^4.0"
     }
 }
