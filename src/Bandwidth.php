@@ -24,8 +24,8 @@ final class Bandwidth
         $this->KB = $this->bucket->getTokensPerInterval()/1024/1024;
         $this->concurrent = new Concurrent(1);
 
-        if (function_exists('app') && app()->bound('reactphp.filesystem')) {
-            $this->filesystem = app('reactphp.filesystem');
+        if (function_exists('app') && app('fs')) {
+            $this->filesystem = app('fs');
         } else {
             $this->filesystem = Factory::create();
         }
